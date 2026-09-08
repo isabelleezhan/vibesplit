@@ -1,0 +1,117 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.summary {
+  padding: clamp(20px, 3vw, 30px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.summaryHeading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 52ch;
+}
+
+.title {
+  font-size: clamp(22px, 2.8vw, 27px);
+}
+
+.subtitle {
+  font-size: 13.5px;
+  color: var(--text-tertiary);
+  line-height: 1.55;
+}
+
+.coherence {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.coherenceRow {
+  display: grid;
+  grid-template-columns: 44px 1fr 38px;
+  align-items: center;
+  gap: 10px;
+}
+
+.coherenceLabel {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+
+.coherenceValue {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.barFillDim {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--text-tertiary);
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #2dd4bf);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.error {
+  padding: 14px 18px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 100, 112, 0.1);
+  border: 1px solid rgba(255, 100, 112, 0.3);
+  color: #ffb3ba;
+  font-size: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.footer {
+  position: sticky;
+  bottom: 16px;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 22px;
+  border-radius: var(--radius-lg);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(var(--panel-blur));
+  -webkit-backdrop-filter: blur(var(--panel-blur));
+}
+
+.footerNote {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}

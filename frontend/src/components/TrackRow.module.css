@@ -1,0 +1,56 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  transition: background 0.15s ease;
+}
+
+.row:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.row:active {
+  cursor: grabbing;
+}
+
+.grip {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.name {
+  font-size: 13.5px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artist {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  border: 1px solid var(--panel-border-strong);
+  border-radius: 999px;
+  padding: 2px 7px;
+  flex-shrink: 0;
+}

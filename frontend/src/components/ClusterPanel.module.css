@@ -1,0 +1,103 @@
+.panel {
+  position: relative;
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  transition: box-shadow 0.25s ease, border-color 0.25s ease, opacity 0.25s ease;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+}
+
+.panel:hover {
+  border-color: var(--cluster-color);
+  box-shadow: 0 0 26px var(--cluster-glow);
+}
+
+.dragOver {
+  border-color: var(--cluster-color);
+  box-shadow: 0 0 0 2px var(--cluster-color), 0 0 34px var(--cluster-glow);
+}
+
+.excluded {
+  opacity: 0.45;
+}
+
+.excluded:hover {
+  box-shadow: none;
+  border-color: var(--panel-border);
+}
+
+.headRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.labelInput {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 6px;
+  margin: -4px -6px;
+}
+
+.labelInput:hover {
+  border-color: var(--panel-border);
+}
+
+.labelInput:focus {
+  outline: none;
+  border-color: var(--cluster-color);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.excludeToggle {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--panel-border-strong);
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.excludeToggle:hover {
+  color: var(--danger);
+  border-color: var(--danger-glow);
+}
+
+.metaRow {
+  display: flex;
+  gap: 12px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.trackList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.emptyTracks {
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  border: 1px dashed var(--panel-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  text-align: center;
+}

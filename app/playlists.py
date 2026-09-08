@@ -9,6 +9,7 @@ router = APIRouter(prefix="/playlists", tags=["playlists"])
 
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 
+
 @router.get("")
 async def list_playlists(access_token: Annotated[str, Depends(get_session_token)]) -> dict:
     """Let the user see their playlists so they can pick which overgrown one to split."""
@@ -26,18 +27,20 @@ async def list_playlists(access_token: Annotated[str, Depends(get_session_token)
         )
 
     data = response.json()
-    # Spotify's paging response can include null/malformed items (e.g. for
-    # playlists that were deleted or are otherwise inaccessible) -> skip those
+
     playlists = []
     for item in data.get("items", []):
         if not item:
             continue
+        images = item.get("images") or []  # empty/auto-gen playlists have no cover
         playlists.append(
             {
                 "id": item.get("id"),
                 "name": item.get("name"),
-                "track_count": (item.get("tracks") or {}).get("total"),
+                
+                "track_count": (item.get("items") or {}).get("total"),
                 "owner": (item.get("owner") or {}).get("display_name"),
+                "image_url": images[0].get("url") if images else None,
             }
         )
 

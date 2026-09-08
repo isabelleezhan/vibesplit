@@ -1,0 +1,47 @@
+.app {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  mask-image: radial-gradient(120% 100% at 50% 30%, #000 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(120% 100% at 50% 30%, #000 55%, transparent 100%);
+}
+
+.header {
+  padding: 28px clamp(20px, 5vw, 56px) 0;
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  cursor: pointer;
+  transition: color 0.2s ease, text-shadow 0.2s ease;
+}
+
+.wordmark:not(:disabled):hover {
+  color: var(--accent-strong);
+  text-shadow: 0 0 18px var(--accent-glow);
+}
+
+.wordmark:disabled {
+  cursor: default;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(24px, 4vw, 56px);
+}
