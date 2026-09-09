@@ -32,9 +32,6 @@ function PlaylistPicker({ playlists, error, onSelect }: PlaylistPickerProps) {
       <div className={styles.wrap}>
         <div className={styles.heading}>
           <h1 className={styles.title}>Pick a playlist to split.</h1>
-          <p className={styles.subtitle}>
-            Best on something big and genre-scrambled — that's where the split earns its keep.
-          </p>
         </div>
 
         {error && <div className={styles.error}>{error}</div>}

@@ -15,6 +15,41 @@
 
 .header {
   padding: 28px clamp(20px, 5vw, 56px) 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Spotify brand guidelines: partner integrations use the full logo
+   (icon + wordmark), min 70px wide digitally, with clear space around it
+   at least half the icon's height. White version since our background
+   isn't flat black (guidelines reserve the green mark for flat
+   black/white backgrounds only). */
+.attribution {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  opacity: 0.85;
+  text-decoration: none;
+  transition: opacity 0.2s ease;
+}
+
+.attribution:hover {
+  opacity: 1;
+}
+
+.attributionText {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.spotifyLogo {
+  width: 70px;
+  height: auto;
+  display: block;
 }
 
 .wordmark {

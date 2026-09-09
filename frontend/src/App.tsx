@@ -14,6 +14,7 @@ import ClusterPreview from './screens/ClusterPreview'
 import SplitSuccess from './screens/SplitSuccess'
 import MoltenMetal from './components/MoltenMetal'
 import { toEditableClusters, type EditableCluster } from './types'
+import spotifyLogo from './assets/spotify-full-logo-white.svg'
 import styles from './App.module.css'
 
 type Step =
@@ -109,6 +110,16 @@ function App() {
         >
           VibeSplit
         </button>
+        <a
+          href="https://www.spotify.com"
+          target="_blank"
+          rel="noreferrer"
+          className={styles.attribution}
+          aria-label="Data provided by Spotify"
+        >
+          <span className={styles.attributionText}>Data from</span>
+          <img src={spotifyLogo} alt="Spotify" className={styles.spotifyLogo} />
+        </a>
       </header>
 
       <main className={styles.main}>
