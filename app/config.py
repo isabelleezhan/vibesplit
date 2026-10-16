@@ -22,9 +22,13 @@ class Settings(BaseSettings):
     database_url: str = ""
     redis_url: str = ""
 
-    # --- Groq (genre tagging + cluster labeling) ---
+    # --- Groq (cluster naming) ---
     # Free tier, no credit card — get a key at https://console.groq.com/keys
     groq_api_key: str = ""
+
+    # --- Last.fm (artist genre tags) ---
+    # Optional. Free key at https://www.last.fm/api/account/create
+    lastfm_api_key: str = ""
 
 @lru_cache
 def get_settings() -> Settings:

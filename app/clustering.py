@@ -1,18 +1,32 @@
-"""Clustering engine: Groups tracks into "vibe" clusters using genre-overlap
-(Jaccard) distance, blended with mood/energy-overlap distance and
-normalized release-era distance.
+"""Clustering engine: groups tracks into "vibe" clusters with k-means over
+one feature vector per track (genre tags, measured audio features,
+release year).
 """
 
+import math
+
 import numpy as np
-from sklearn.cluster import AgglomerativeClustering
+from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
-GENRE_WEIGHT = 0.5
-MOOD_WEIGHT = 0.3
-ERA_WEIGHT = 0.2
+# Pairwise distance weights, used for coherence scoring.
+GENRE_WEIGHT = 0.7
+ERA_WEIGHT = 0.3
+
+# How much each part of a track's feature vector counts in clustering.
+# Genre tags are scaled to length 1 before weighting, and the four audio
+# features are 0 to 1 each.
+VECTOR_GENRE_WEIGHT = 1.0
+VECTOR_AUDIO_WEIGHT = 1.5
+VECTOR_ERA_WEIGHT = 0.4
+AUDIO_KEYS = ("energy", "valence", "danceability", "acousticness")
 
 MIN_CLUSTERS = 2
 MAX_CLUSTERS = 5
+# A split where any cluster is smaller than this share of the playlist
+# isn't a candidate. Silhouette alone happily picks "everything + a few
+# outliers", which is useless as playlists.
+MIN_CLUSTER_FRACTION = 0.05
 NEUTRAL_DISTANCE = 0.5  # used when a numeric feature is missing on either side
 
 MIN_TRACKS_FOR_COHERENCE = 4
@@ -54,9 +68,8 @@ def _tag_overlap_distance(tags_a: set[str], tags_b: set[str]) -> float | None:
 def _pairwise_distance(a: dict, b: dict) -> float:
     era_distance = _numeric_distance(a["_year_norm"], b["_year_norm"])
     genre_distance = _tag_overlap_distance(set(a["genres"]), set(b["genres"]))
-    mood_distance = _tag_overlap_distance(set(a.get("moods", [])), set(b.get("moods", [])))
 
-    components = [(GENRE_WEIGHT, genre_distance), (MOOD_WEIGHT, mood_distance), (ERA_WEIGHT, era_distance)]
+    components = [(GENRE_WEIGHT, genre_distance), (ERA_WEIGHT, era_distance)]
     available = [(weight, distance) for weight, distance in components if distance is not None]
     total_weight = sum(weight for weight, _ in available)
     return sum(weight * distance for weight, distance in available) / total_weight
@@ -108,36 +121,73 @@ def _single_cluster_result(tracks: list[dict]) -> dict:
     }
 
 
+def _tag_block(tags_per_track: list[list[str]], weight: float) -> np.ndarray:
+    """One-hot rows over every tag in the playlist, each row scaled to
+    length `weight` (all zeros for a track with no tags)."""
+    vocabulary = {tag: i for i, tag in enumerate(sorted({t for tags in tags_per_track for t in tags}))}
+    block = np.zeros((len(tags_per_track), len(vocabulary)))
+    for row, tags in enumerate(tags_per_track):
+        for tag in tags:
+            block[row, vocabulary[tag]] = 1.0
+        norm = np.linalg.norm(block[row])
+        if norm:
+            block[row] *= weight / norm
+    return block
+
+
+def build_feature_matrix(tracks: list[dict]) -> np.ndarray:
+    """One row per track: weighted genre tags, audio features
+    and release year. Missing audio or year is filled with the playlist
+    average, so a gap reads as "typical" rather than as an extreme."""
+    audio_rows = [
+        [track["audio"][key] for key in AUDIO_KEYS] if track.get("audio") else None for track in tracks
+    ]
+    known_audio = [row for row in audio_rows if row is not None]
+    audio_mean = np.mean(known_audio, axis=0) if known_audio else np.full(len(AUDIO_KEYS), 0.5)
+    audio = np.array([row if row is not None else audio_mean for row in audio_rows])
+
+    years = _normalize([_extract_year(t.get("release_date")) for t in tracks])
+    known_years = [y for y in years if y is not None]
+    year_mean = sum(known_years) / len(known_years) if known_years else 0.5
+    era = np.array([[year_mean if y is None else y] for y in years])
+
+    return np.hstack(
+        [
+            _tag_block([t.get("genres", []) for t in tracks], VECTOR_GENRE_WEIGHT),
+            VECTOR_AUDIO_WEIGHT * audio,
+            VECTOR_ERA_WEIGHT * era,
+        ]
+    )
+
+
 def cluster_tracks(tracks: list[dict]) -> dict:
-    """Cluster tracks by vibe. Returns the chosen k, its silhouette score,
-    and the resulting groups. Falls back to a single cluster when there
-    aren't enough tracks to meaningfully split (fewer than MIN_CLUSTERS + 1)."""
+    """Cluster tracks by vibe. Tries k from MIN_CLUSTERS to MAX_CLUSTERS,
+    and keeps the k with the best silhouette score among splits where
+    every cluster is at least MIN_CLUSTER_FRACTION of the playlist.
+    Falls back to a single cluster when there aren't enough tracks, or
+    enough distinct tracks, to split."""
     n = len(tracks)
     if n < MIN_CLUSTERS + 1:
         return _single_cluster_result(tracks)
 
-    year_norm = _normalize([_extract_year(t.get("release_date")) for t in tracks])
-    enriched = [{**track, "_year_norm": y} for track, y in zip(tracks, year_norm)]
-
-    distance_matrix = np.zeros((n, n))
-    for i in range(n):
-        for j in range(i + 1, n):
-            d = _pairwise_distance(enriched[i], enriched[j])
-            distance_matrix[i, j] = distance_matrix[j, i] = d
+    features = build_feature_matrix(tracks)
+    distinct = len(np.unique(features.round(9), axis=0))
+    max_k = min(_max_k(n), distinct)
+    min_size = max(1, math.ceil(MIN_CLUSTER_FRACTION * n))
 
     best_k, best_score, best_labels = None, -1.0, None
-    for k in range(MIN_CLUSTERS, _max_k(n) + 1):
-        labels = AgglomerativeClustering(
-            n_clusters=k, metric="precomputed", linkage="average"
-        ).fit_predict(distance_matrix)
-        if len(set(labels)) < 2:
-            continue  # silhouette needs at least 2 distinct clusters
-        score = silhouette_score(distance_matrix, labels, metric="precomputed")
+    for k in range(MIN_CLUSTERS, max_k + 1):
+        # Fixed seed so the same playlist always splits the same way.
+        labels = KMeans(n_clusters=k, n_init=10, random_state=0).fit_predict(features)
+        sizes = np.bincount(labels)
+        if len(sizes) < 2 or sizes.min() < min_size:
+            continue
+        score = silhouette_score(features, labels)
         if score > best_score:
             best_k, best_score, best_labels = k, score, labels
 
     if best_labels is None:
-        # Every track ended up equidistant/identical — degenerate case.
+        # Identical tracks, or no split without a too-small cluster.
         return _single_cluster_result(tracks)
 
     clusters: dict[int, list[dict]] = {}

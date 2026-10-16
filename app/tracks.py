@@ -1,23 +1,59 @@
-import time
+import asyncio
 from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audio_features import get_audio_features
 from app.auth import get_session_token
 from app.db import get_db
-from app.genre_tagging import tag_tracks
-from app.models import TrackTagCache
+from app.lastfm import get_artist_genres, track_genres
+from app.timing import StageTimer
 
 router = APIRouter(prefix="/playlists", tags=["tracks"])
 
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 
-# How long a cached tag entry stays valid before it's treated as a miss
-# and re-tagged.
+# How long a cached audio-features or artist-genre entry stays valid
+# before it's treated as a miss and fetched again.
 CACHE_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
+
+# Spotify answers 429 with a Retry-After header (seconds). Honour it a few
+# times before giving up, but cap each wait so one bad header can't stall
+# a job for minutes.
+SPOTIFY_MAX_ATTEMPTS = 4
+SPOTIFY_MAX_RETRY_WAIT_SECONDS = 30
+
+
+async def _spotify_get(client: httpx.AsyncClient, url: str, access_token: str, params: dict | None = None) -> httpx.Response:
+    """GET against the Spotify API, waiting out 429 rate limits."""
+    for attempt in range(1, SPOTIFY_MAX_ATTEMPTS + 1):
+        response = await client.get(url, headers={"Authorization": f"Bearer {access_token}"}, params=params)
+        if response.status_code != 429 or attempt == SPOTIFY_MAX_ATTEMPTS:
+            return response
+        try:
+            wait_seconds = float(response.headers.get("Retry-After", ""))
+        except ValueError:
+            wait_seconds = 2 ** attempt
+        await asyncio.sleep(min(wait_seconds, SPOTIFY_MAX_RETRY_WAIT_SECONDS))
+    return response
+
+
+async def get_playlist_snapshot_id(playlist_id: str, access_token: str) -> str:
+    """Spotify's version stamp for a playlist, which changes on every edit.
+    Also doubles as an access check: a playlist the user can't read 404s."""
+    async with httpx.AsyncClient() as client:
+        response = await _spotify_get(
+            client, f"{SPOTIFY_API_BASE}/playlists/{playlist_id}", access_token, params={"fields": "snapshot_id"}
+        )
+    if response.status_code != 200:
+        raise HTTPException(
+            # Pass "no access" / "no such playlist" through; anything else is Spotify's problem.
+            status_code=response.status_code if response.status_code in (403, 404) else 502,
+            detail=f"Spotify playlist request failed: {response.status_code} {response.text}",
+        )
+    return response.json()["snapshot_id"]
 
 
 async def _get_all_playlist_items(client: httpx.AsyncClient, playlist_id: str, access_token: str) -> list[dict]:
@@ -29,7 +65,7 @@ async def _get_all_playlist_items(client: httpx.AsyncClient, playlist_id: str, a
 
     # Keep fetching pages until Spotify stops giving a `next` URL.
     while url:
-        response = await client.get(url, headers={"Authorization": f"Bearer {access_token}"}, params=params)
+        response = await _spotify_get(client, url, access_token, params=params)
         if response.status_code != 200:
             raise HTTPException(
                 status_code=502,
@@ -43,47 +79,27 @@ async def _get_all_playlist_items(client: httpx.AsyncClient, playlist_id: str, a
     return items
 
 
-async def _get_cached_tags(db: AsyncSession, track_ids: set[str]) -> dict[str, dict[str, list[str]]]:
-    """Returns {track_id: {"genres": [...], "moods": [...]}} for whichever
-    of the given ids have a not-yet-expired cache entry."""
-    if not track_ids:
-        return {}
-    result = await db.execute(select(TrackTagCache).where(TrackTagCache.track_id.in_(track_ids)))
-    now = time.time()
-    return {
-        row.track_id: {"genres": row.genres, "moods": row.moods}
-        for row in result.scalars()
-        if now - row.tagged_at < CACHE_TTL_SECONDS
-    }
+async def get_enriched_playlist_tracks(
+    playlist_id: str,
+    access_token: str,
+    db: AsyncSession,
+    timer: StageTimer | None = None,
+) -> list[dict]:
+    """Every track in the playlist, with Last.fm genres (`genres`, from its
+    artists' listener tags) and measured audio features (`audio`, None when
+    ReccoBeats doesn't know the track). Both are cached, so re-splitting
+    mostly skips the network.
 
-
-async def _save_tags_to_cache(db: AsyncSession, tags_by_track_id: dict[str, dict[str, list[str]]]) -> None:
-    """Upserts freshly-tagged tracks into the cache. `tags_by_track_id`
-    should already be filtered down to real, cacheable Spotify ids."""
-    if not tags_by_track_id:
-        return
-    now = time.time()
-    for track_id, tags in tags_by_track_id.items():
-        cached = await db.get(TrackTagCache, track_id)
-        if cached:
-            cached.genres = tags["genres"]
-            cached.moods = tags["moods"]
-            cached.tagged_at = now
-        else:
-            db.add(TrackTagCache(track_id=track_id, genres=tags["genres"], moods=tags["moods"], tagged_at=now))
-    await db.commit()
-
-
-async def get_enriched_playlist_tracks(playlist_id: str, access_token: str, db: AsyncSession) -> list[dict]:
-    """Every track in the playlist, with genre tags AND mood/energy
-    tags attached (`genres` and `moods`).
-
-    NOTE: enrichment comes from a batched LLM call over whichever tracks
-    aren't already cached (see app/genre_tagging.py and the cache helpers
-    above).
+    There's no LLM in this step. It used to tag every track's genres and
+    moods, which was slow (about 14 minutes for 790 new tracks) and noisy.
+    With Last.fm genres and ReccoBeats audio in place, dropping the mood
+    tags changed almost no splits.
     """
-    async with httpx.AsyncClient() as client:
-        items = await _get_all_playlist_items(client, playlist_id, access_token)
+    timer = timer or StageTimer()
+
+    with timer.stage("fetch"):
+        async with httpx.AsyncClient() as client:
+            items = await _get_all_playlist_items(client, playlist_id, access_token)
 
     tracks = []
     for item in items:
@@ -108,24 +124,25 @@ async def get_enriched_playlist_tracks(playlist_id: str, access_token: str, db: 
             }
         )
 
-    for i, track in enumerate(tracks):
-        track["_tag_key"] = track["id"] or f"_local_{i}"
-    cacheable_ids = {track["id"] for track in tracks if track["id"]}
+    # Local files have no Spotify id, so neither source can look them up.
+    track_ids = {track["id"] for track in tracks if track["id"]}
 
-    cached_tags = await _get_cached_tags(db, cacheable_ids)
-    tracks_needing_tagging = [t for t in tracks if t["_tag_key"] not in cached_tags]
+    with timer.stage("audio"):
+        audio_by_id, audio_cache_hits = await get_audio_features(db, track_ids, CACHE_TTL_SECONDS)
 
-    freshly_tagged = await tag_tracks(tracks_needing_tagging)
-    newly_cacheable = {key: tags for key, tags in freshly_tagged.items() if key in cacheable_ids}
-    await _save_tags_to_cache(db, newly_cacheable)
-
-    tags_by_key = {**cached_tags, **freshly_tagged}
+    with timer.stage("genres"):
+        artist_names = {a["id"]: a["name"] for t in tracks for a in t["artists"] if a["id"] and a["name"]}
+        genres_by_artist, artist_cache_hits = await get_artist_genres(db, artist_names, CACHE_TTL_SECONDS)
 
     for track in tracks:
-        tags = tags_by_key.get(track.pop("_tag_key"), {})
-        track["genres"] = sorted(tags.get("genres", []))
-        track["moods"] = sorted(tags.get("moods", []))
+        track["genres"] = sorted(track_genres(track, genres_by_artist))
+        track["audio"] = audio_by_id.get(track["id"])
 
+    timer.counts["tracks"] = len(tracks)
+    timer.counts["audio_found"] = sum(1 for track in tracks if track["audio"])
+    timer.counts["audio_cache_hits"] = audio_cache_hits
+    timer.counts["genre_found"] = sum(1 for track in tracks if track["genres"])
+    timer.counts["artist_genre_cache_hits"] = artist_cache_hits
     return tracks
 
 

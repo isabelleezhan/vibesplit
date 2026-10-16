@@ -13,14 +13,6 @@ interface ClusterPreviewProps {
   error: string | null
 }
 
-function formatScore(score: number | null): string {
-  return score === null ? '—' : `${Math.round(score * 100)}%`
-}
-
-function barWidth(score: number | null): string {
-  return score === null ? '0%' : `${Math.round(score * 100)}%`
-}
-
 function ClusterPreview({ playlist, meta, clusters, onChangeClusters, onConfirm, error }: ClusterPreviewProps) {
   const includedCount = clusters.filter((c) => !c.excluded).length
 
@@ -65,23 +57,6 @@ function ClusterPreview({ playlist, meta, clusters, onChangeClusters, onConfirm,
             Split into {meta.k} clusters · silhouette {meta.silhouette_score?.toFixed(2) ?? '—'}. Drag tracks between
             panels, rename a vibe, or exclude one before confirming.
           </p>
-        </div>
-
-        <div className={styles.coherence}>
-          <div className={styles.coherenceRow}>
-            <span className={`mono ${styles.coherenceLabel}`}>before</span>
-            <div className={styles.bar}>
-              <div className={styles.barFillDim} style={{ width: barWidth(meta.original_coherence) }} />
-            </div>
-            <span className={`mono ${styles.coherenceValue}`}>{formatScore(meta.original_coherence)}</span>
-          </div>
-          <div className={styles.coherenceRow}>
-            <span className={`mono ${styles.coherenceLabel}`}>after</span>
-            <div className={styles.bar}>
-              <div className={styles.barFill} style={{ width: barWidth(meta.avg_new_coherence) }} />
-            </div>
-            <span className={`mono ${styles.coherenceValue}`}>{formatScore(meta.avg_new_coherence)}</span>
-          </div>
         </div>
       </motion.div>
 

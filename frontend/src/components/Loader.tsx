@@ -4,10 +4,13 @@ import styles from './Loader.module.css'
 interface LoaderProps {
   message: string
   sub?: string
+  // 0 to 1. Only shown for work that can actually be counted, so the bar
+  // never pretends to know more than it does.
+  progress?: number
 }
 
 
-function Loader({ message, sub }: LoaderProps) {
+function Loader({ message, sub, progress }: LoaderProps) {
   return (
     <div className={styles.wrap}>
       <motion.div
@@ -24,6 +27,22 @@ function Loader({ message, sub }: LoaderProps) {
         {message}
       </motion.p>
       {sub && <p className={styles.sub}>{sub}</p>}
+      {progress !== undefined && (
+        <div
+          className={styles.track}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress * 100)}
+        >
+          <motion.div
+            className={styles.fill}
+            initial={false}
+            animate={{ scaleX: progress }}
+            transition={{ duration: 0.6, ease: 'easeOut' }}
+          />
+        </div>
+      )}
     </div>
   )
 }

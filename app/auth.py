@@ -168,6 +168,24 @@ async def _refresh(refresh_token: str) -> dict:
     return response.json()
 
 
+async def ensure_fresh_token(user: User, db: AsyncSession) -> str:
+    """Returns a usable access token for `user`, refreshing it (and
+    persisting the refresh) if it's expired. Shared by the request path
+    below and the background worker, which has no request or cookie."""
+    # 30s buffer.
+    if user.expires_at <= time.time() + 30:
+        if not user.refresh_token:
+            raise HTTPException(status_code=401, detail="Session expired — visit /auth/login again.")
+        refreshed = await _refresh(user.refresh_token)
+        user.access_token = refreshed["access_token"]
+        user.expires_at = time.time() + refreshed.get("expires_in", 3600)
+
+        user.refresh_token = refreshed.get("refresh_token", user.refresh_token)
+        await db.commit()
+
+    return user.access_token
+
+
 async def get_current_user(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -186,17 +204,7 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated — visit /auth/login first.")
 
-    # 30s buffer.
-    if user.expires_at <= time.time() + 30:
-        if not user.refresh_token:
-            raise HTTPException(status_code=401, detail="Session expired — visit /auth/login again.")
-        refreshed = await _refresh(user.refresh_token)
-        user.access_token = refreshed["access_token"]
-        user.expires_at = time.time() + refreshed.get("expires_in", 3600)
-
-        user.refresh_token = refreshed.get("refresh_token", user.refresh_token)
-        await db.commit()
-
+    await ensure_fresh_token(user, db)
     return user
 
 

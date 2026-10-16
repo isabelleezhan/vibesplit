@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   confirmSplit,
-  getClusters,
   getPlaylists,
+  getSplitJob,
+  startSplitJob,
   type ClustersResponse,
   type ConfirmSplitResult,
   type Playlist,
+  type SplitJob,
 } from './api'
 import Login from './screens/Login'
 import PlaylistPicker from './screens/PlaylistPicker'
@@ -14,6 +16,14 @@ import ClusterPreview from './screens/ClusterPreview'
 import SplitSuccess from './screens/SplitSuccess'
 import MoltenMetal from './components/MoltenMetal'
 import { toEditableClusters, type EditableCluster } from './types'
+import {
+  SplitCancelled,
+  describeJob,
+  forgetActiveJob,
+  recallActiveJob,
+  rememberActiveJob,
+  waitForSplitJob,
+} from './lib/splitJob'
 import spotifyLogo from './assets/spotify-full-logo-white.svg'
 import styles from './App.module.css'
 
@@ -32,6 +42,8 @@ function App() {
   const [clusterMeta, setClusterMeta] = useState<ClustersResponse | null>(null)
   const [editableClusters, setEditableClusters] = useState<EditableCluster[]>([])
   const [error, setError] = useState<string | null>(null)
+  // The latest poll of the running split job, for the loader's progress.
+  const [job, setJob] = useState<SplitJob | null>(null)
 
   const requestIdRef = useRef(0)
 
@@ -39,26 +51,42 @@ function App() {
     getPlaylists()
       .then((res) => {
         setPlaylists(res.playlists)
-        setStep({ name: 'picker' })
+        // Refreshed mid-split: the worker kept going, so resume watching.
+        const stored = recallActiveJob()
+        if (stored) {
+          runSplit(stored.playlist, () => getSplitJob(stored.jobId))
+        } else {
+          setStep({ name: 'picker' })
+        }
       })
       .catch(() => setStep({ name: 'login' }))
   }, [])
 
-  async function handleSelectPlaylist(playlist: Playlist) {
+  async function runSplit(playlist: Playlist, getJob: () => Promise<SplitJob>) {
     const requestId = ++requestIdRef.current
+    const isCancelled = () => requestIdRef.current !== requestId
     setError(null)
+    setJob(null)
     setStep({ name: 'clustering', playlist })
     try {
-      const result = await getClusters(playlist.id)
-      if (requestIdRef.current !== requestId) return
+      const started = await getJob()
+      if (isCancelled()) return
+      rememberActiveJob(started.id, playlist)
+      const result = await waitForSplitJob(started, setJob, isCancelled)
+      forgetActiveJob()
       setClusterMeta(result)
       setEditableClusters(toEditableClusters(result.clusters))
       setStep({ name: 'preview', playlist })
     } catch (err) {
-      if (requestIdRef.current !== requestId) return
+      if (err instanceof SplitCancelled || isCancelled()) return
+      forgetActiveJob()
       setError(err instanceof Error ? err.message : 'Something went wrong while clustering.')
       setStep({ name: 'picker' })
     }
+  }
+
+  function handleSelectPlaylist(playlist: Playlist) {
+    runSplit(playlist, () => startSplitJob(playlist.id))
   }
 
   async function handleConfirm(playlist: Playlist) {
@@ -80,6 +108,10 @@ function App() {
   function handleGoHome() {
     if (step.name === 'checking' || step.name === 'login') return
     requestIdRef.current++
+    // Walking away stops the watching, not the job: it still finishes and
+    // gets cached, so picking the same playlist again comes back instantly.
+    forgetActiveJob()
+    setJob(null)
     setClusterMeta(null)
     setEditableClusters([])
     setError(null)
@@ -132,7 +164,10 @@ function App() {
         )}
 
         {step.name === 'clustering' && (
-          <Loader message={`Splitting "${step.playlist.name}" into vibes…`} sub="Clustering tracks, then asking an LLM to name and refine each group." />
+          <Loader
+            message={`Splitting "${step.playlist.name}" into vibes…`}
+            sub={describeJob(job)}
+          />
         )}
 
         {step.name === 'preview' && clusterMeta && (

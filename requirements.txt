@@ -7,5 +7,7 @@ sqlalchemy[asyncio]
 asyncpg
 scikit-learn
 groq
+arq
 pytest
 pytest-asyncio
+aiosqlite

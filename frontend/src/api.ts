@@ -45,7 +45,6 @@ export interface Track {
   release_date: string | null
   artists: Artist[]
   genres: string[]
-  moods: string[]
 }
 
 export interface Cluster {
@@ -64,6 +63,24 @@ export interface ClustersResponse {
   avg_new_coherence: number | null
 }
 
+export type SplitJobStatus = 'queued' | 'running' | 'done' | 'failed'
+
+// Which pipeline stage a running job is in (see app/pipeline.py).
+export type SplitJobStage = 'fetching' | 'clustering' | 'labeling'
+
+export interface SplitJob {
+  id: string
+  playlist_id: string
+  status: SplitJobStatus
+  stage: SplitJobStage | null
+  // Only set for stages that can count their work (none today).
+  progress: { done: number; total: number } | null
+  cache_hit: boolean
+  error: string | null
+  // Only set once status is 'done'.
+  result: ClustersResponse | null
+}
+
 export interface ConfirmSplitResult {
   created: { playlist_id: string; name: string; track_count: number }[]
 }
@@ -78,8 +95,12 @@ export function getPlaylists(): Promise<PlaylistsResponse> {
   return request<PlaylistsResponse>('/playlists')
 }
 
-export function getClusters(playlistId: string): Promise<ClustersResponse> {
-  return request<ClustersResponse>(`/playlists/${playlistId}/clusters`, { method: 'POST' })
+export function startSplitJob(playlistId: string): Promise<SplitJob> {
+  return request<SplitJob>(`/playlists/${playlistId}/split-jobs`, { method: 'POST' })
+}
+
+export function getSplitJob(jobId: string): Promise<SplitJob> {
+  return request<SplitJob>(`/jobs/${jobId}`)
 }
 
 export function confirmSplit(playlistId: string, clusters: Cluster[]): Promise<ConfirmSplitResult> {

@@ -61,7 +61,6 @@ function ClusterPanel({ cluster, index, onRename, onToggleExclude, onDropTrack }
 
       <div className={`mono ${styles.metaRow}`}>
         <span>{cluster.tracks.length} tracks</span>
-        {cluster.coherence !== null && <span>coherence {Math.round(cluster.coherence * 100)}%</span>}
       </div>
 
       <div className={styles.trackList}>

@@ -3,19 +3,22 @@
 import pytest
 
 from app.clustering import (
+    MIN_CLUSTER_FRACTION,
     MIN_TRACKS_FOR_COHERENCE,
+    VECTOR_AUDIO_WEIGHT,
     _extract_year,
     _normalize,
     _numeric_distance,
     _pairwise_distance,
     _tag_overlap_distance,
+    build_feature_matrix,
     cluster_tracks,
     compute_coherence,
 )
 
 
-def make_track(genre: str, year: int, mood: str | None = None) -> dict:
-    return {"genres": [genre], "moods": [mood] if mood else [], "_year_norm": 0.5}
+def make_track(genre: str | None, year_norm: float = 0.5) -> dict:
+    return {"genres": [genre] if genre else [], "_year_norm": year_norm}
 
 
 class TestExtractYear:
@@ -79,49 +82,43 @@ class TestTagOverlapDistance:
 
 
 class TestPairwiseDistance:
-    def test_identical_genre_mood_era(self):
-        a = make_track("house", 2020, "rave")
-        b = make_track("house", 2020, "rave")
-        assert _pairwise_distance(a, b) == 0.0
+    def test_identical_genre_and_era(self):
+        assert _pairwise_distance(make_track("house"), make_track("house")) == 0.0
 
-    def test_same_genre_opposite_mood_is_not_identical(self):
-        chill = make_track("house", 2020, "chill")
-        rave = make_track("house", 2020, "rave")
-        assert _pairwise_distance(chill, rave) > 0
+    def test_different_era_is_not_identical(self):
+        assert _pairwise_distance(make_track("house", 0.0), make_track("house", 1.0)) > 0
 
-    def test_missing_mood_data_is_dropped_not_penalized(self):
-        with_mood = make_track("house", 2020, "rave")
-        without_mood = make_track("house", 2020, mood=None)
-        assert _pairwise_distance(with_mood, without_mood) == 0.0
+    def test_missing_genre_data_is_dropped_not_penalized(self):
+        assert _pairwise_distance(make_track("house"), make_track(None)) == 0.0
 
-    def test_genre_dominates_over_mood(self):
-        from app.clustering import ERA_WEIGHT, GENRE_WEIGHT, MOOD_WEIGHT
+    def test_genre_dominates_over_era(self):
+        from app.clustering import ERA_WEIGHT, GENRE_WEIGHT
 
-        same_genre_diff_mood = _pairwise_distance(make_track("house", 2020, "chill"), make_track("house", 2020, "rave"))
-        same_mood_diff_genre = _pairwise_distance(make_track("house", 2020, "chill"), make_track("jazz", 2020, "chill"))
-        assert GENRE_WEIGHT > MOOD_WEIGHT  # sanity-check the config itself
-        assert same_mood_diff_genre > same_genre_diff_mood
+        same_genre_diff_era = _pairwise_distance(make_track("house", 0.0), make_track("house", 1.0))
+        same_era_diff_genre = _pairwise_distance(make_track("house"), make_track("jazz"))
+        assert GENRE_WEIGHT > ERA_WEIGHT  # sanity-check the config itself
+        assert same_era_diff_genre > same_genre_diff_era
 
 
 class TestComputeCoherence:
     def test_below_minimum_returns_none(self):
-        tracks = [make_track("pop", 2020) for _ in range(MIN_TRACKS_FOR_COHERENCE - 1)]
+        tracks = [make_track("pop") for _ in range(MIN_TRACKS_FOR_COHERENCE - 1)]
         assert compute_coherence(tracks) is None
 
     def test_identical_tracks_are_maximally_coherent(self):
-        tracks = [{"genres": ["pop"], "moods": ["chill"], "release_date": "2020-01-01"} for _ in range(5)]
+        tracks = [{"genres": ["pop"], "release_date": "2020-01-01"} for _ in range(5)]
         assert compute_coherence(tracks) == 1.0
 
     def test_scattered_tracks_score_lower_than_tight_ones(self):
-        tight = [{"genres": ["pop"], "moods": ["chill"], "release_date": "2020-01-01"} for _ in range(5)]
+        tight = [{"genres": ["pop"], "release_date": "2020-01-01"} for _ in range(5)]
         scattered = [
-            {"genres": [g], "moods": [m], "release_date": d}
-            for g, m, d in [
-                ("pop", "chill", "2020-01-01"),
-                ("metal", "aggressive", "1995-01-01"),
-                ("jazz", "romantic", "1960-01-01"),
-                ("house", "rave", "2015-01-01"),
-                ("folk", "melancholy", "1975-01-01"),
+            {"genres": [g], "release_date": d}
+            for g, d in [
+                ("pop", "2020-01-01"),
+                ("metal", "1995-01-01"),
+                ("jazz", "1960-01-01"),
+                ("house", "2015-01-01"),
+                ("folk", "1975-01-01"),
             ]
         ]
         assert compute_coherence(tight) > compute_coherence(scattered)
@@ -130,7 +127,7 @@ class TestComputeCoherence:
 class TestClusterTracks:
     def _tracks(self, n: int, genre: str, year: int) -> list[dict]:
         return [
-            {"id": f"{genre}{i}", "genres": [genre], "moods": [], "release_date": f"{year}-01-01"}
+            {"id": f"{genre}{i}", "genres": [genre], "release_date": f"{year}-01-01"}
             for i in range(n)
         ]
 
@@ -161,7 +158,50 @@ class TestClusterTracks:
         assert total == len(tracks)
 
     def test_fully_identical_tracks_still_partition_cleanly(self):
-        tracks = [{"id": f"t{i}", "genres": ["pop"], "moods": [], "release_date": "2020-01-01"} for i in range(6)]
+        tracks = [{"id": f"t{i}", "genres": ["pop"], "release_date": "2020-01-01"} for i in range(6)]
         result = cluster_tracks(tracks)
         assert sum(c["track_count"] for c in result["clusters"]) == len(tracks)
 
+
+    def test_audio_separates_tracks_with_the_same_tags(self):
+        loud = [{**t, "audio": {"energy": 0.9, "valence": 0.8, "danceability": 0.9, "acousticness": 0.05}}
+                for t in self._tracks(10, "pop", 2020)]
+        soft = [{**t, "id": f"soft{i}", "audio": {"energy": 0.2, "valence": 0.2, "danceability": 0.3, "acousticness": 0.9}}
+                for i, t in enumerate(self._tracks(10, "pop", 2020))]
+        result = cluster_tracks(loud + soft)
+        assert result["k"] == 2
+        groups = sorted(sorted(t["id"] for t in c["tracks"]) for c in result["clusters"])
+        assert groups == sorted([sorted(t["id"] for t in loud), sorted(t["id"] for t in soft)])
+
+    def test_tiny_outlier_group_is_not_split_off(self):
+        # 2 of 62 tracks is under MIN_CLUSTER_FRACTION, so "everything +
+        # the 2 odd ones" isn't an acceptable split.
+        assert 2 < MIN_CLUSTER_FRACTION * 62
+        tracks = self._tracks(60, "pop", 2020) + self._tracks(2, "metal", 1995)
+        result = cluster_tracks(tracks)
+        assert result["k"] == 1
+
+
+class TestBuildFeatureMatrix:
+    AUDIO = {"energy": 1.0, "valence": 0.0, "danceability": 1.0, "acousticness": 0.0}
+
+    def test_one_row_per_track_and_tags_scaled_to_unit_length(self):
+        tracks = [
+            {"genres": ["pop", "k-pop"], "audio": self.AUDIO, "release_date": "2020"},
+            {"genres": ["rock"], "audio": self.AUDIO, "release_date": "2010"},
+        ]
+        matrix = build_feature_matrix(tracks)
+        # 3 genres + 4 audio + 1 era
+        assert matrix.shape == (2, 8)
+        assert matrix[0, :3] == pytest.approx([2 ** -0.5, 2 ** -0.5, 0])
+
+    def test_missing_audio_is_filled_with_playlist_average(self):
+        other = {**self.AUDIO, "energy": 0.0}
+        tracks = [
+            {"genres": ["pop"], "audio": self.AUDIO},
+            {"genres": ["pop"], "audio": other},
+            {"genres": ["pop"], "audio": None},
+        ]
+        matrix = build_feature_matrix(tracks)
+        # Column 0 is the one genre, so energy is column 1.
+        assert matrix[2, 1] == pytest.approx(VECTOR_AUDIO_WEIGHT * 0.5)
