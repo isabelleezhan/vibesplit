@@ -69,3 +69,8 @@
   font-size: 13px;
   color: var(--text-tertiary);
 }
+
+.footer > :global(button) {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

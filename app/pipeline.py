@@ -24,6 +24,24 @@ async def _no_progress(stage: str, done: int | None = None, total: int | None = 
     pass
 
 
+def add_coherence_scores(
+    result: dict, original_coherence: float | None, year_range: tuple[float, float] | None
+) -> None:
+    """Scores each labeled cluster and the split as a whole, in place.
+    Shared with the demo split (app/demo.py)."""
+    scored_coherences = []
+    for cluster in result["clusters"]:
+        coherence = compute_coherence(cluster["tracks"], year_range=year_range)
+        cluster["coherence"] = coherence
+        if coherence is not None:
+            scored_coherences.append(coherence)
+
+    result["original_coherence"] = original_coherence
+    result["avg_new_coherence"] = (
+        round(sum(scored_coherences) / len(scored_coherences), 4) if scored_coherences else None
+    )
+
+
 async def run_split_pipeline(
     playlist_id: str,
     access_token: str,
@@ -49,17 +67,7 @@ async def run_split_pipeline(
     with timer.stage("label"):
         result = await label_clusters(clustered)
 
-    scored_coherences = []
-    for cluster in result["clusters"]:
-        coherence = compute_coherence(cluster["tracks"], year_range=year_range)
-        cluster["coherence"] = coherence
-        if coherence is not None:
-            scored_coherences.append(coherence)
-
-    result["original_coherence"] = original_coherence
-    result["avg_new_coherence"] = (
-        round(sum(scored_coherences) / len(scored_coherences), 4) if scored_coherences else None
-    )
+    add_coherence_scores(result, original_coherence, year_range)
 
     timer.counts["clusters"] = len(result["clusters"])
     timings = timer.summary()

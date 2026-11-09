@@ -96,7 +96,7 @@ async def client(session_factory, queue, snapshot):
 
 class TestStartSplitJob:
     async def test_creates_a_queued_job_and_enqueues_it(self, client, queue, session_factory):
-        response = await client.post("/playlists/pl1/split-jobs")
+        response = await client.post("/api/playlists/pl1/split-jobs")
         assert response.status_code == 202
         body = response.json()
         assert body["status"] == JOB_QUEUED
@@ -106,14 +106,14 @@ class TestStartSplitJob:
         assert (row.user_id, row.playlist_id, row.snapshot_id) == ("me", "pl1", "snap1")
 
     async def test_second_start_returns_the_same_active_job(self, client, queue):
-        first = (await client.post("/playlists/pl1/split-jobs")).json()
-        second = (await client.post("/playlists/pl1/split-jobs")).json()
+        first = (await client.post("/api/playlists/pl1/split-jobs")).json()
+        second = (await client.post("/api/playlists/pl1/split-jobs")).json()
         assert first["id"] == second["id"]
         assert queue.enqueue_job.await_count == 1
 
     async def test_different_playlists_get_separate_jobs(self, client):
-        first = (await client.post("/playlists/pl1/split-jobs")).json()
-        second = (await client.post("/playlists/pl2/split-jobs")).json()
+        first = (await client.post("/api/playlists/pl1/split-jobs")).json()
+        second = (await client.post("/api/playlists/pl2/split-jobs")).json()
         assert first["id"] != second["id"]
 
     async def test_cache_hit_returns_a_finished_job_without_queueing(self, client, queue, session_factory):
@@ -128,7 +128,7 @@ class TestStartSplitJob:
                 )
             )
             await db.commit()
-        body = (await client.post("/playlists/pl1/split-jobs")).json()
+        body = (await client.post("/api/playlists/pl1/split-jobs")).json()
         assert body["status"] == JOB_DONE
         assert body["cache_hit"] is True
         assert body["result"] == FAKE_RESULT
@@ -146,7 +146,7 @@ class TestStartSplitJob:
                 )
             )
             await db.commit()
-        body = (await client.post("/playlists/pl1/split-jobs")).json()
+        body = (await client.post("/api/playlists/pl1/split-jobs")).json()
         assert body["status"] == JOB_QUEUED
         queue.enqueue_job.assert_awaited_once()
 
@@ -162,13 +162,13 @@ class TestStartSplitJob:
                 )
             )
             await db.commit()
-        body = (await client.post("/playlists/pl1/split-jobs")).json()
+        body = (await client.post("/api/playlists/pl1/split-jobs")).json()
         assert body["status"] == JOB_QUEUED
 
     async def test_stale_active_job_is_failed_and_replaced(self, client, session_factory):
         long_ago = time.time() - RUNNING_STALE_SECONDS - 1
         await add_job(session_factory, id="dead", status=JOB_RUNNING, heartbeat_at=long_ago)
-        body = (await client.post("/playlists/pl1/split-jobs")).json()
+        body = (await client.post("/api/playlists/pl1/split-jobs")).json()
         assert body["id"] != "dead"
         assert body["status"] == JOB_QUEUED
         dead = await get_job_row(session_factory, "dead")
@@ -177,16 +177,16 @@ class TestStartSplitJob:
 
     async def test_queue_down_fails_the_job_with_503(self, client, queue, session_factory):
         queue.enqueue_job.side_effect = ConnectionError("redis is down")
-        response = await client.post("/playlists/pl1/split-jobs")
+        response = await client.post("/api/playlists/pl1/split-jobs")
         assert response.status_code == 503
         # The failed job doesn't block the next attempt.
         queue.enqueue_job.side_effect = None
-        retry = await client.post("/playlists/pl1/split-jobs")
+        retry = await client.post("/api/playlists/pl1/split-jobs")
         assert retry.json()["status"] == JOB_QUEUED
 
     async def test_unreadable_playlist_passes_spotifys_error_through(self, client, snapshot):
         snapshot.side_effect = HTTPException(status_code=404, detail="not found")
-        response = await client.post("/playlists/pl1/split-jobs")
+        response = await client.post("/api/playlists/pl1/split-jobs")
         assert response.status_code == 404
 
 
@@ -200,20 +200,20 @@ class TestGetJob:
             progress_done=40,
             progress_total=200,
         )
-        body = (await client.get("/jobs/job1")).json()
+        body = (await client.get("/api/jobs/job1")).json()
         assert body["stage"] == "clustering"
         assert body["progress"] == {"done": 40, "total": 200}
 
     async def test_other_users_job_is_a_404(self, client, session_factory):
         await add_job(session_factory, user_id="someone-else")
-        assert (await client.get("/jobs/job1")).status_code == 404
+        assert (await client.get("/api/jobs/job1")).status_code == 404
 
     async def test_missing_job_is_a_404(self, client):
-        assert (await client.get("/jobs/nope")).status_code == 404
+        assert (await client.get("/api/jobs/nope")).status_code == 404
 
     async def test_running_job_with_quiet_heartbeat_reads_as_failed(self, client, session_factory):
         await add_job(session_factory, status=JOB_RUNNING, heartbeat_at=time.time() - RUNNING_STALE_SECONDS - 1)
-        body = (await client.get("/jobs/job1")).json()
+        body = (await client.get("/api/jobs/job1")).json()
         assert body["status"] == JOB_FAILED
         assert body["error"] == STALE_RUNNING_ERROR
 
@@ -224,11 +224,11 @@ class TestGetJob:
             started_at=time.time() - 3600,
             heartbeat_at=time.time() - 5,
         )
-        assert (await client.get("/jobs/job1")).json()["status"] == JOB_RUNNING
+        assert (await client.get("/api/jobs/job1")).json()["status"] == JOB_RUNNING
 
     async def test_queued_job_nobody_picks_up_reads_as_failed(self, client, session_factory):
         await add_job(session_factory, created_at=time.time() - QUEUED_STALE_SECONDS - 1)
-        assert (await client.get("/jobs/job1")).json()["status"] == JOB_FAILED
+        assert (await client.get("/api/jobs/job1")).json()["status"] == JOB_FAILED
 
 
 # --- Worker -----------------------------------------------------------------

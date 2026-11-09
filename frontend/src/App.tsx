@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   confirmSplit,
+  getDemoPlaylists,
   getPlaylists,
   getSplitJob,
+  logout,
+  splitDemoPlaylist,
   startSplitJob,
   type ClustersResponse,
   type ConfirmSplitResult,
@@ -44,6 +47,9 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   // The latest poll of the running split job, for the loader's progress.
   const [job, setJob] = useState<SplitJob | null>(null)
+  // Browsing the no-login demo: sample playlists, split on the server
+  // from saved data, never written to Spotify.
+  const [demo, setDemo] = useState(false)
 
   const requestIdRef = useRef(0)
 
@@ -85,8 +91,62 @@ function App() {
     }
   }
 
+  async function runDemoSplit(playlist: Playlist) {
+    const requestId = ++requestIdRef.current
+    setError(null)
+    setJob(null)
+    setStep({ name: 'clustering', playlist })
+    try {
+      const result = await splitDemoPlaylist(playlist.id)
+      if (requestIdRef.current !== requestId) return
+      setClusterMeta(result)
+      setEditableClusters(toEditableClusters(result.clusters))
+      setStep({ name: 'preview', playlist })
+    } catch (err) {
+      if (requestIdRef.current !== requestId) return
+      setError(err instanceof Error ? err.message : 'Something went wrong while clustering.')
+      setStep({ name: 'picker' })
+    }
+  }
+
   function handleSelectPlaylist(playlist: Playlist) {
-    runSplit(playlist, () => startSplitJob(playlist.id))
+    if (demo) runDemoSplit(playlist)
+    else runSplit(playlist, () => startSplitJob(playlist.id))
+  }
+
+  async function handleTryDemo() {
+    const requestId = ++requestIdRef.current
+    setDemo(true)
+    setError(null)
+    setPlaylists([])
+    setStep({ name: 'checking' })
+    try {
+      const res = await getDemoPlaylists()
+      if (requestIdRef.current !== requestId) return
+      setPlaylists(res.playlists)
+    } catch (err) {
+      if (requestIdRef.current !== requestId) return
+      setError(err instanceof Error ? err.message : 'Couldn\'t load the sample playlists.')
+    }
+    setStep({ name: 'picker' })
+  }
+
+  function resetToLogin() {
+    requestIdRef.current++
+    forgetActiveJob()
+    setDemo(false)
+    setJob(null)
+    setPlaylists([])
+    setClusterMeta(null)
+    setEditableClusters([])
+    setError(null)
+    setStep({ name: 'login' })
+  }
+
+  async function handleLogout() {
+    // Even if the request fails, the user asked to leave: show the login screen.
+    await logout().catch(() => undefined)
+    resetToLogin()
   }
 
   async function handleConfirm(playlist: Playlist) {
@@ -118,6 +178,8 @@ function App() {
     setStep({ name: 'picker' })
   }
 
+  const loggedIn = !demo && step.name !== 'checking' && step.name !== 'login'
+
   return (
     <div className={styles.app}>
       <div className={styles.backdrop} aria-hidden="true">
@@ -142,31 +204,48 @@ function App() {
         >
           VibeSplit
         </button>
-        <a
-          href="https://www.spotify.com"
-          target="_blank"
-          rel="noreferrer"
-          className={styles.attribution}
-          aria-label="Data provided by Spotify"
-        >
-          <span className={styles.attributionText}>Data from</span>
-          <img src={spotifyLogo} alt="Spotify" className={styles.spotifyLogo} />
-        </a>
+        <div className={styles.headerRight}>
+          {demo && (
+            <>
+              <span className={`mono ${styles.demoPill}`}>DEMO · SAMPLE DATA</span>
+              <button className={styles.headerLink} onClick={resetToLogin}>
+                Exit demo
+              </button>
+            </>
+          )}
+          {loggedIn && (
+            <button className={styles.headerLink} onClick={handleLogout}>
+              Log out
+            </button>
+          )}
+          <a
+            href="https://www.spotify.com"
+            target="_blank"
+            rel="noreferrer"
+            className={styles.attribution}
+            aria-label="Data provided by Spotify"
+          >
+            <span className={styles.attributionText}>Data from</span>
+            <img src={spotifyLogo} alt="Spotify" className={styles.spotifyLogo} />
+          </a>
+        </div>
       </header>
 
       <main className={styles.main}>
-        {step.name === 'checking' && <Loader message="Checking your session…" />}
+        {step.name === 'checking' && (
+          <Loader message={demo ? 'Loading sample playlists…' : 'Checking your session…'} />
+        )}
 
-        {step.name === 'login' && <Login />}
+        {step.name === 'login' && <Login onTryDemo={handleTryDemo} />}
 
         {step.name === 'picker' && (
-          <PlaylistPicker playlists={playlists} error={error} onSelect={handleSelectPlaylist} />
+          <PlaylistPicker playlists={playlists} error={error} onSelect={handleSelectPlaylist} demo={demo} />
         )}
 
         {step.name === 'clustering' && (
           <Loader
             message={`Splitting "${step.playlist.name}" into vibes…`}
-            sub={describeJob(job)}
+            sub={demo ? 'Running k-means on the saved sample data…' : describeJob(job)}
           />
         )}
 
@@ -177,6 +256,8 @@ function App() {
             clusters={editableClusters}
             onChangeClusters={setEditableClusters}
             onConfirm={() => handleConfirm(step.playlist)}
+            onBackToSamples={handleGoHome}
+            demo={demo}
             error={error}
           />
         )}

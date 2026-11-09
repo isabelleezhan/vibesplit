@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -17,7 +18,15 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 SPOTIFY_AUTHORIZE_URL = "https://accounts.spotify.com/authorize"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 SPOTIFY_API_BASE = "https://api.spotify.com/v1"
-USER_ID_COOKIE_NAME = "spotify_user_id"
+# The signed session cookie (Starlette's SessionMiddleware, set up in
+# app/main.py) stores the logged-in Spotify id under this key. The cookie
+# is signed with SECRET_KEY, so editing it to someone else's id breaks
+# the signature and the session reads as empty.
+SESSION_USER_KEY = "spotify_id"
+SESSION_COOKIE_NAME = "vibesplit_session"
+SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+# The old unsigned cookie. Cleared on login so it doesn't linger.
+LEGACY_USER_ID_COOKIE_NAME = "spotify_user_id"
 
 # Read the user's saved library, read private playlists,
 # and create/modify playlists on their behalf.
@@ -29,12 +38,32 @@ SCOPES = " ".join(
     ]
 )
 
-# Short-lived CSRF guard for the login->callback round trip.
-_pending_states: set[str] = set()
+# CSRF guard for the login->callback round trip. Each state lives in
+# Redis (not in this process) so it survives a restart and works across
+# several app instances, and expires on its own if the user never comes back.
+OAUTH_STATE_TTL_SECONDS = 10 * 60
+OAUTH_STATE_KEY_PREFIX = "oauth_state:"
+
+
+def get_redis(request: Request) -> Redis:
+    """FastAPI dependency: the Redis connection opened in app/main.py's
+    lifespan (the same pool arq uses for the job queue)."""
+    return request.app.state.arq
+
+
+async def save_oauth_state(redis: Redis, state: str) -> None:
+    await redis.set(OAUTH_STATE_KEY_PREFIX + state, "1", ex=OAUTH_STATE_TTL_SECONDS)
+
+
+async def consume_oauth_state(redis: Redis, state: str) -> bool:
+    """True the first time a state we issued comes back, False for an
+    unknown, expired or already used one. GETDEL reads and deletes in one
+    atomic step, so two requests racing with the same state can't both win."""
+    return await redis.getdel(OAUTH_STATE_KEY_PREFIX + state) is not None
 
 
 @router.get("/login")
-def login() -> RedirectResponse:
+async def login(redis: Annotated[Redis, Depends(get_redis)]) -> RedirectResponse:
     settings = get_settings()
     if not settings.spotify_client_id:
         raise HTTPException(
@@ -43,7 +72,7 @@ def login() -> RedirectResponse:
         )
 
     state = secrets.token_urlsafe(16)
-    _pending_states.add(state)
+    await save_oauth_state(redis, state)
 
     params = {
         "response_type": "code",
@@ -57,7 +86,11 @@ def login() -> RedirectResponse:
 
 
 @router.get("/callback")
-async def callback(request: Request, db: Annotated[AsyncSession, Depends(get_db)]) -> RedirectResponse:
+async def callback(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+) -> RedirectResponse:
     # Spotify redirects the browser here after the user approves (or
     # denies) access, appending `code`, `state`, and (on denial) `error`
     # as query parameters.
@@ -72,10 +105,8 @@ async def callback(request: Request, db: Annotated[AsyncSession, Depends(get_db)
 
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing 'code' or 'state' in callback.")
-    if state not in _pending_states:
-        raise HTTPException(status_code=400, detail="Unknown or reused 'state' — possible CSRF, please retry /auth/login.")
-    
-    _pending_states.discard(state)
+    if not await consume_oauth_state(redis, state):
+        raise HTTPException(status_code=400, detail="Unknown or reused 'state' — possible CSRF, please log in again.")
 
     # `async with httpx.AsyncClient()` opens an HTTP client for the
     # duration of this block, closing its connections automatically
@@ -130,18 +161,24 @@ async def callback(request: Request, db: Annotated[AsyncSession, Depends(get_db)
         db.add(user)
     await db.commit()
 
+    # Start a fresh session rather than adding to whatever was there.
+    # SessionMiddleware signs it and sets the cookie on this response.
+    request.session.clear()
+    request.session[SESSION_USER_KEY] = spotify_id
+
     # Hand the browser back to the frontend app.
     resp = RedirectResponse(settings.frontend_url)
-    resp.set_cookie(
-        USER_ID_COOKIE_NAME,
-        spotify_id,
-        # httponly=True means client-side JavaScript can't read this
-        # cookie.
-        httponly=True,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,
-    )
+    resp.delete_cookie(LEGACY_USER_ID_COOKIE_NAME)
     return resp
+
+
+@router.post("/logout")
+def logout(request: Request) -> dict[str, bool]:
+    """Ends the session. SessionMiddleware sees it's empty and expires the
+    cookie. Spotify tokens stay in Postgres for the worker's sake; they
+    can't be reached without a session."""
+    request.session.clear()
+    return {"ok": True}
 
 
 async def _refresh(refresh_token: str) -> dict:
@@ -175,7 +212,7 @@ async def ensure_fresh_token(user: User, db: AsyncSession) -> str:
     # 30s buffer.
     if user.expires_at <= time.time() + 30:
         if not user.refresh_token:
-            raise HTTPException(status_code=401, detail="Session expired — visit /auth/login again.")
+            raise HTTPException(status_code=401, detail="Session expired — please log in again.")
         refreshed = await _refresh(user.refresh_token)
         user.access_token = refreshed["access_token"]
         user.expires_at = time.time() + refreshed.get("expires_in", 3600)
@@ -190,19 +227,19 @@ async def get_current_user(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """FastAPI dependency: resolve the caller's user-id cookie to their
+    """FastAPI dependency: resolve the caller's signed session to their
     Postgres row, transparently refreshing the Spotify token (and
     persisting the refresh) if it's expired. Returns the whole User row
     rather than just the token, so a route that also needs the Spotify
     user id (e.g. to create a playlist "for" them) doesn't need a second
-    cookie read."""
-    spotify_id = request.cookies.get(USER_ID_COOKIE_NAME)
+    session read."""
+    spotify_id = request.session.get(SESSION_USER_KEY)
     if not spotify_id:
-        raise HTTPException(status_code=401, detail="Not authenticated — visit /auth/login first.")
+        raise HTTPException(status_code=401, detail="Not authenticated — please log in.")
 
     user = await db.get(User, spotify_id)
     if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated — visit /auth/login first.")
+        raise HTTPException(status_code=401, detail="Not authenticated — please log in.")
 
     await ensure_fresh_token(user, db)
     return user

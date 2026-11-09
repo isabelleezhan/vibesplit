@@ -8,6 +8,7 @@ asyncpg
 scikit-learn
 groq
 arq
+itsdangerous
 pytest
 pytest-asyncio
 aiosqlite

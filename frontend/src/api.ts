@@ -1,10 +1,12 @@
 // Every function here corresponds to one route in app/*.py. 
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string
+// Same origin as the page: CloudFront routes /api/* to the backend in
+// production, and Vite's dev server proxies it locally (vite.config.ts).
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api'
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    credentials: 'include',
+    credentials: 'same-origin',
     ...options,
   })
 
@@ -109,4 +111,18 @@ export function confirmSplit(playlistId: string, clusters: Cluster[]): Promise<C
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clusters }),
   })
+}
+
+export function logout(): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/auth/logout', { method: 'POST' })
+}
+
+// --- Demo (no login; sample data saved on the server) ---
+
+export function getDemoPlaylists(): Promise<PlaylistsResponse> {
+  return request<PlaylistsResponse>('/demo/playlists')
+}
+
+export function splitDemoPlaylist(playlistId: string): Promise<ClustersResponse> {
+  return request<ClustersResponse>(`/demo/playlists/${playlistId}/split`, { method: 'POST' })
 }

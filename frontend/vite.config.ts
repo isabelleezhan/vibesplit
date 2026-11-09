@@ -14,5 +14,11 @@ export default defineConfig({
     // at http://127.0.0.1:5173, not http://localhost:5173.
     host: '127.0.0.1',
     port: 5173,
+    // Mirrors production, where CloudFront serves the app and sends /api/*
+    // to the backend: the browser only ever sees this one origin, so the
+    // session cookie needs no cross-site settings and there's no CORS.
+    proxy: {
+      '/api': 'http://127.0.0.1:8000',
+    },
   },
 })

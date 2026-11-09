@@ -8,9 +8,10 @@ interface PlaylistPickerProps {
   playlists: Playlist[]
   error: string | null
   onSelect: (playlist: Playlist) => void
+  demo?: boolean
 }
 
-function PlaylistPicker({ playlists, error, onSelect }: PlaylistPickerProps) {
+function PlaylistPicker({ playlists, error, onSelect, demo = false }: PlaylistPickerProps) {
   const [coverGlows, setCoverGlows] = useState<Record<string, string>>({})
 
   useEffect(() => {
@@ -31,13 +32,21 @@ function PlaylistPicker({ playlists, error, onSelect }: PlaylistPickerProps) {
     <div className={styles.page}>
       <div className={styles.wrap}>
         <div className={styles.heading}>
-          <h1 className={styles.title}>Pick a playlist to split.</h1>
+          <h1 className={styles.title}>{demo ? 'Pick a sample playlist to split.' : 'Pick a playlist to split.'}</h1>
+          {demo && (
+            <p className={styles.demoNote}>
+              Real playlists, saved with their genres and audio features. The clustering runs live; nothing here
+              touches a Spotify account.
+            </p>
+          )}
         </div>
 
         {error && <div className={styles.error}>{error}</div>}
 
         {playlists.length === 0 ? (
-          <p className={styles.empty}>No playlists found on this account.</p>
+          <p className={styles.empty}>
+            {demo ? 'No sample playlists are set up yet.' : 'No playlists found on this account.'}
+          </p>
         ) : (
           <div className={styles.grid}>
             {playlists.map((playlist, i) => (

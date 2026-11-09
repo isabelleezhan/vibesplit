@@ -2,7 +2,11 @@ import { motion } from 'motion/react'
 import { goToLogin } from '../api'
 import styles from './Login.module.css'
 
-function Login() {
+interface LoginProps {
+  onTryDemo: () => void
+}
+
+function Login({ onTryDemo }: LoginProps) {
   return (
     <div className={styles.wrap}>
       <motion.div
@@ -42,15 +46,29 @@ function Login() {
           playlists. Nothing leaves your account until you confirm.
         </motion.p>
 
-        <motion.button
-          className="glowButton"
-          onClick={goToLogin}
+        <motion.div
+          className={styles.actions}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35, duration: 0.45 }}
         >
-          Connect Spotify
-        </motion.button>
+          <button className="glowButton" onClick={goToLogin}>
+            Connect Spotify
+          </button>
+          <button className="ghostButton" onClick={onTryDemo}>
+            Try the demo
+          </button>
+        </motion.div>
+
+        <motion.p
+          className={styles.note}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.45, duration: 0.45 }}
+        >
+          Spotify only lets a handful of approved accounts log in to apps like this one. The demo splits real
+          sample playlists with no login needed.
+        </motion.p>
       </motion.div>
     </div>
   )

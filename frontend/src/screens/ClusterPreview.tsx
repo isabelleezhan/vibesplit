@@ -10,10 +10,22 @@ interface ClusterPreviewProps {
   clusters: EditableCluster[]
   onChangeClusters: (clusters: EditableCluster[]) => void
   onConfirm: () => void
+  onBackToSamples: () => void
+  // Sample data: there's no Spotify account to write the split to.
+  demo?: boolean
   error: string | null
 }
 
-function ClusterPreview({ playlist, meta, clusters, onChangeClusters, onConfirm, error }: ClusterPreviewProps) {
+function ClusterPreview({
+  playlist,
+  meta,
+  clusters,
+  onChangeClusters,
+  onConfirm,
+  onBackToSamples,
+  demo = false,
+  error,
+}: ClusterPreviewProps) {
   const includedCount = clusters.filter((c) => !c.excluded).length
 
   function renameCluster(clusterId: number, label: string) {
@@ -75,14 +87,25 @@ function ClusterPreview({ playlist, meta, clusters, onChangeClusters, onConfirm,
         ))}
       </div>
 
-      <div className={styles.footer}>
-        <span className={styles.footerNote}>
-          {includedCount} of {clusters.length} clusters will be created.
-        </span>
-        <button className="glowButton" onClick={onConfirm} disabled={includedCount === 0}>
-          Create {includedCount} playlist{includedCount === 1 ? '' : 's'} on Spotify
-        </button>
-      </div>
+      {demo ? (
+        <div className={styles.footer}>
+          <span className={styles.footerNote}>
+            Sample data: this split isn&rsquo;t saved to Spotify.
+          </span>
+          <button className="ghostButton" onClick={onBackToSamples}>
+            Try another sample
+          </button>
+        </div>
+      ) : (
+        <div className={styles.footer}>
+          <span className={styles.footerNote}>
+            {includedCount} of {clusters.length} clusters will be created.
+          </span>
+          <button className="glowButton" onClick={onConfirm} disabled={includedCount === 0}>
+            Create {includedCount} playlist{includedCount === 1 ? '' : 's'} on Spotify
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -44,7 +44,16 @@
   max-width: 46ch;
 }
 
-.card > :global(.glowButton) {
-  align-self: flex-start;
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-top: 8px;
+}
+
+.note {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-tertiary);
+  max-width: 50ch;
 }
