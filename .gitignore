@@ -16,5 +16,8 @@ venv/
 # Logs
 *.log
 
-# Claude Code runtime state (session-specific, not project config)
-.claude/*.lock
+# Local Claude Code config and project notes (kept out of the repo)
+.claude/
+CLAUDE.md
+PROJECT.md
+VIBESPLIT_CONTEXT.md
